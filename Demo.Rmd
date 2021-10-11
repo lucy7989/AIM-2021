@@ -1,0 +1,2899 @@
+---
+title: "Demo"
+author: "Lucy Chen"
+date:  "`r format(Sys.time(), '%d %B, %Y')`"
+output:   
+    pdf_document:
+      toc: true
+      toc_depth: 4
+    fontsize: 9pt
+    geometry: margin=0.25in
+---
+
+\newpage
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# 0. Data Preparation
+```{r warning=FALSE,  message=FALSE}
+
+## housekeeping ##
+
+#https://cran.r-project.org/web/packages/MatchIt/vignettes/estimating-effects.html
+options("scipen"=100, "digits"=4)
+rm(list=ls())
+
+library(tidyverse) # data manipulation
+library(MatchIt) # matching 
+library(psych)
+library(cobalt) # ploting
+library(ggplot2) # ploting
+library(lmtest) # robust standard error
+library(sandwich) # robust standard error
+library(boot) # booth-strapping unbiased confidence interval
+
+data_path <- "C:\\Other\\Presentation\\data\\"
+data <- readRDS(paste(data_path, "data_combined.rds", sep=""))
+data_HS <- data %>% 
+    filter(School_Level== "High" & TOT_ENR_M+TOT_ENR_F >0 ) %>% 
+    mutate(
+      SECURITY_GUA = ifelse(round(SCH_FTESECURITY_GUA, 0) > 0, 1, 
+                        ifelse(round(SCH_FTESECURITY_GUA, 0) == 0, 0, 
+                              SCH_FTESECURITY_GUA)),
+      SERVICES_PSY = ifelse(round(SCH_FTESERVICES_PSY, 0) > 0, 1, 
+                        ifelse(round(SCH_FTESERVICES_PSY, 0) == 0, 0, 
+                                   SCH_FTESERVICES_PSY)),
+      SERVICES_SOC = ifelse(round(SCH_FTESERVICES_SOC, 0) > 0, 1, 
+                        ifelse(round(SCH_FTESERVICES_SOC, 0) == 0, 0, 
+                                   SCH_FTESERVICES_SOC)),
+      school_size = ifelse((TOT_ENR_M+TOT_ENR_F) <150, 1, 
+                        ifelse((TOT_ENR_M+TOT_ENR_F) <450, 2, 
+                            ifelse((TOT_ENR_M+TOT_ENR_F) <1000, 3, 4)))) %>%
+  mutate(
+      #school arrest#
+      SCH_DISCWODIS_ARR_BL = SCH_DISCWODIS_ARR_BL_M + SCH_DISCWODIS_ARR_BL_F,
+      SCH_DISCWODIS_ARR_WH = SCH_DISCWODIS_ARR_WH_M + SCH_DISCWODIS_ARR_WH_F,
+      # Relative Risk BL#
+      RR_ARR = (SCH_DISCWODIS_ARR_BL/SCH_ENR_BL)/(SCH_DISCWODIS_ARR_WH/SCH_ENR_WH), 
+      RR_ARR_F = (SCH_DISCWODIS_ARR_BL_F/SCH_ENR_BL_F)/(SCH_DISCWODIS_ARR_WH_F/SCH_ENR_WH_F),
+      RR_ARR_M = (SCH_DISCWODIS_ARR_BL_M/SCH_ENR_BL_M)/(SCH_DISCWODIS_ARR_WH_M/SCH_ENR_WH_M),
+      
+      #law enforcement#
+      SCH_DISCWODIS_REF_BL = SCH_DISCWODIS_REF_BL_M + SCH_DISCWODIS_REF_BL_F,
+      SCH_DISCWODIS_REF_WH = SCH_DISCWODIS_REF_WH_M + SCH_DISCWODIS_REF_WH_F,
+      # Relative Risk BL#
+      RR_REF = (SCH_DISCWODIS_REF_BL/SCH_ENR_BL)/(SCH_DISCWODIS_REF_WH/SCH_ENR_WH),
+      RR_REF_F = (SCH_DISCWODIS_REF_BL_F/SCH_ENR_BL_F)/(SCH_DISCWODIS_REF_WH_F/SCH_ENR_WH_F), 
+      RR_REF_M = (SCH_DISCWODIS_REF_BL_M/SCH_ENR_BL_M)/(SCH_DISCWODIS_REF_WH_M/SCH_ENR_WH_M),
+      
+      # ISS # 
+      SCH_DISCWODIS_ISS_BL = SCH_DISCWODIS_ISS_BL_M + SCH_DISCWODIS_ISS_BL_F,
+      SCH_DISCWODIS_ISS_WH = SCH_DISCWODIS_ISS_WH_M + SCH_DISCWODIS_ISS_WH_F,
+      # Relative Risk BL#
+      RR_ISS = (SCH_DISCWODIS_ISS_BL/SCH_ENR_BL)/(SCH_DISCWODIS_ISS_WH/SCH_ENR_WH), 
+      RR_ISS_F = (SCH_DISCWODIS_ISS_BL_F/SCH_ENR_BL_F)/(SCH_DISCWODIS_ISS_WH_F/SCH_ENR_WH_F),
+      RR_ISS_M = (SCH_DISCWODIS_ISS_BL_M/SCH_ENR_BL_M)/(SCH_DISCWODIS_ISS_WH_M/SCH_ENR_WH_M),
+      
+      # Single OSS # 
+      SCH_DISCWODIS_SINGOOS_BL = SCH_DISCWODIS_SINGOOS_BL_M + SCH_DISCWODIS_SINGOOS_BL_F,
+      SCH_DISCWODIS_SINGOOS_WH = SCH_DISCWODIS_SINGOOS_WH_M + SCH_DISCWODIS_SINGOOS_WH_F,
+      # Relative Risk BL#
+      RR_SINGOOS = (SCH_DISCWODIS_SINGOOS_BL/SCH_ENR_BL)/(SCH_DISCWODIS_SINGOOS_WH/SCH_ENR_WH), 
+      RR_SINGOOS_F = (SCH_DISCWODIS_SINGOOS_BL_F/SCH_ENR_BL_F)/(SCH_DISCWODIS_SINGOOS_WH_F/SCH_ENR_WH_F),
+      RR_SINGOOS_M = (SCH_DISCWODIS_SINGOOS_BL_M/SCH_ENR_BL_M)/(SCH_DISCWODIS_SINGOOS_WH_M/SCH_ENR_WH_M),
+      
+      # Multiple OSS #
+      SCH_DISCWODIS_MULTOOS_BL = SCH_DISCWODIS_MULTOOS_BL_M + SCH_DISCWODIS_MULTOOS_BL_F,
+      SCH_DISCWODIS_MULTOOS_WH = SCH_DISCWODIS_MULTOOS_WH_M + SCH_DISCWODIS_MULTOOS_WH_F,
+      # Relative Risk BL#
+      RR_MULTOOS = (SCH_DISCWODIS_MULTOOS_BL/SCH_ENR_BL)/(SCH_DISCWODIS_MULTOOS_WH/SCH_ENR_WH), 
+      RR_MULTOOS_F = (SCH_DISCWODIS_MULTOOS_BL_F/SCH_ENR_BL_F)/(SCH_DISCWODIS_MULTOOS_WH_F/SCH_ENR_WH_F),
+      RR_MULTOOS_M = (SCH_DISCWODIS_MULTOOS_BL_M/SCH_ENR_BL_M)/(SCH_DISCWODIS_MULTOOS_WH_M/SCH_ENR_WH_M))
+```
+
+\newpage
+
+
+# 1. Presence of Security Staff
+## 1.1 Student Discipline - Referrals to Law Enforcement (REF)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; 
+##              Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; 
+##                                         Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of security staff [SECURITY_GUA]: 0: none or less than 1 FTE security staff presence ; 
+##                                            1: more than 1 FTE security staff presence
+# Outcome Variables
+##  Black  without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL]
+##  Black Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_M]
+##  Black Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_F]
+##  White Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_M]
+##  White Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 1.1.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.1.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_M"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.1.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_F"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 1.2 Discipline of Students Without Disabilities - School-Related Arrest (ARR)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of security staff [SECURITY_GUA]: 0: none or less than 1 FTE security staff presence ; 
+##                                            1: more than 1 FTE security staff presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_M]
+##  Black Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_F]
+##  White Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_M]
+##  White Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 1.2.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.2.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_M"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.2.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_F"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 1.3 Discipline of Students without Disabilities - In-School Suspensions (ISS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of security staff [SECURITY_GUA]: 0: none or less than 1 FTE security staff presence ; 
+##                                            1: more than 1 FTE security staff presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_M]
+##  Black Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_F]
+##  White Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_M]
+##  White Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related ISSests, not the instances of ISSests.
+### • School-related ISSest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related ISSest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 1.3.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.3.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_M"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.3.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_F"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+## 1.4 Discipline of Students without Disabilities - One Out-of-School Suspension (SINGOOS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of security staff [SECURITY_GUA]: 0: none or less than 1 FTE security staff presence ; 
+##                                            1: more than 1 FTE security staff presence
+# Outcome Variables
+##  Black Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_M]
+##  Black Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_F]
+##  White Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_M]
+##  White Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_F]
+```
+\newpage
+
+### 1.4.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.4.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_M"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.4.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_F"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+
+## 1.5 Discipline of Students without Disabilities - More than One Out-of-School Suspension (MULTOOS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of security staff [SECURITY_GUA]: 0: none or less than 1 FTE security staff presence ; 
+##                                            1: more than 1 FTE security staff presence
+# Outcome Variables
+##  Black Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_M]
+##  Black Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_F]
+##  White Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_M]
+##  White Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_F]
+##
+
+```
+\newpage
+
+### 1.5.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.5.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_M"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 1.5.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_F"
+treatment <- "SECURITY_GUA"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+
+# 2. Presence of Psychologist
+## 2.1 Student Discipline - Referrals to Law Enforcement (REF)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; 
+##              Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; 
+##                                         Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of Psychologist [SERVICES_PSY]: 0: none or less than 1 FTE Psychologist presence ; 
+##                                            1: more than 1 FTE Psychologist presence
+# Outcome Variables
+##  Black  without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL]
+##  Black Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_M]
+##  Black Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_F]
+##  White Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_M]
+##  White Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 2.1.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.1.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_M"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.1.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_F"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 2.2 Discipline of Students Without Disabilities - School-Related Arrest (ARR)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of Psychologist [SERVICES_PSY]: 0: none or less than 1 FTE Psychologist presence ; 
+##                                            1: more than 1 FTE Psychologist presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_M]
+##  Black Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_F]
+##  White Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_M]
+##  White Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 2.2.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.2.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_M"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.2.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_F"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 2.3 Discipline of Students without Disabilities - In-School Suspensions (ISS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of Psychologist [SERVICES_PSY]: 0: none or less than 1 FTE Psychologist presence ; 
+##                                            1: more than 1 FTE Psychologist presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_M]
+##  Black Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_F]
+##  White Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_M]
+##  White Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related ISSests, not the instances of ISSests.
+### • School-related ISSest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related ISSest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 2.3.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.3.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_M"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.3.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_F"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+## 2.4 Discipline of Students without Disabilities - One Out-of-School Suspension (SINGOOS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of Psychologist [SERVICES_PSY]: 0: none or less than 1 FTE Psychologist presence ; 
+##                                            1: more than 1 FTE Psychologist presence
+# Outcome Variables
+##  Black Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_M]
+##  Black Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_F]
+##  White Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_M]
+##  White Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_F]
+```
+\newpage
+
+### 2.4.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.4.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_M"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.4.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_F"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 2.5 Discipline of Students without Disabilities - More than One Out-of-School Suspension (MULTOOS)
+```{r}
+# Matching variables
+## 1. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of Psychologist [SERVICES_PSY]: 0: none or less than 1 FTE Psychologist presence ; 
+##                                            1: more than 1 FTE Psychologist presence
+# Outcome Variables
+##  Black Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_M]
+##  Black Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_F]
+##  White Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_M]
+##  White Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_F]
+##
+
+```
+\newpage
+
+### 2.5.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.5.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_M"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 2.5.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_F"
+treatment <- "SERVICES_PSY"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+
+# 3. Presence of social worker
+## 3.1 Student Discipline - Referrals to Law Enforcement (REF)
+```{r}
+# Matching variables
+## 3. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; 
+##              Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; 
+##                                         Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of social worker [SERVICES_SOC]: 0: none or less than 1 FTE social worker presence ; 
+##                                            1: more than 1 FTE social worker presence
+# Outcome Variables
+##  Black  without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL]
+##  Black Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_M]
+##  Black Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_BL_F]
+##  White Males without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_M]
+##  White Female without disabilities who referrals to law enforcement [SCH_DISCWODIS_REF_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 3.1.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.1.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_M"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.1.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_REF_F"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 3.2 Discipline of Students Without Disabilities - School-Related Arrest (ARR)
+```{r}
+# Matching variables
+## 3. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of social worker [SERVICES_SOC]: 0: none or less than 1 FTE social worker presence ; 
+##                                            1: more than 1 FTE social worker presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_M]
+##  Black Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_BL_F]
+##  White Males without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_M]
+##  White Female without disabilities who received a school-related arrest [SCH_DISCWODIS_ARR_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related arrests, not the instances of arrests.
+### • School-related arrest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related arrest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 3.2.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.2.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_M"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.2.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ARR_F"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+## 3.3 Discipline of Students without Disabilities - In-School Suspensions (ISS)
+```{r}
+# Matching variables
+## 3. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of social worker [SERVICES_SOC]: 0: none or less than 1 FTE social worker presence ; 
+##                                            1: more than 1 FTE social worker presence
+# Outcome Variables
+##  Black Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_M]
+##  Black Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_BL_F]
+##  White Males without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_M]
+##  White Female without disabilities who received a school-related ISSest [SCH_DISCWODIS_ISS_WH_F]
+##
+### Instructions
+### • Report the number of students receiving school-related ISSests, not the instances of ISSests.
+### • School-related ISSest is a subset of referral to law enforcement. 
+###   Therefore, a student counted in the “school-related ISSest” table 
+###   should also be counted in the “referred to law enforcement agency” table.
+```
+\newpage
+
+### 3.3.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.3.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_M"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.3.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_ISS_F"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+## 3.4 Discipline of Students without Disabilities - One Out-of-School Suspension (SINGOOS)
+```{r}
+# Matching variables
+## 3. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of social worker [SERVICES_SOC]: 0: none or less than 1 FTE social worker presence ; 
+##                                            1: more than 1 FTE social worker presence
+# Outcome Variables
+##  Black Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_M]
+##  Black Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_BL_F]
+##  White Males without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_M]
+##  White Female without disabilities who received One Out-of-School Suspension [SCH_DISCWODIS_SINGOOS_WH_F]
+```
+\newpage
+
+### 3.4.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.4.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_M"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.4.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_SINGOOS_F"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+
+
+## 3.5 Discipline of Students without Disabilities - More than One Out-of-School Suspension (MULTOOS)
+```{r}
+# Matching variables
+## 3. school region [region] : 4 levels: South, West, Northeast, Midwest
+## 2. school social economic status [ses_sch]: 4 levels: 
+##              calculated by the percentage of free and reduced lunch students
+##              Low:>75% ; Middle-Low: 50%-75%; Middle-High: 25%-50%; High:: <25% 
+## 3. school size [school_size]: 4 levels: Level 1: <150; Level 2 [150:499]; Level 3: [500:999]; Level 4: >999
+## 4. total number of discipline [n_discipline]: sum of all type of discipline incidents 
+## 5. total teacher FTE [SCH_FTETEACH_TOT]: 
+## 6. percentage of black student at school [per_bl]:
+## 7: percentage of male student at school [per_male]:
+## 8: percentage of white student at school [per_wh]: 
+#
+# Treatment variable
+## presence of social worker [SERVICES_SOC]: 0: none or less than 1 FTE social worker presence ; 
+##                                            1: more than 1 FTE social worker presence
+# Outcome Variables
+##  Black Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_M]
+##  Black Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_BL_F]
+##  White Males without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_M]
+##  White Female without disabilities who received More than One Out-of-School Suspension [SCH_DISCWODIS_MULTOOS_WH_F]
+##
+
+```
+\newpage
+
+### 3.5.1 Black Students v.s. White Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.5.2 Black Male Students v.s. White Male Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_M"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
+### 3.5.3 Black Female Students v.s. White Female Students
+```{r}
+
+####   data prep          #####################################################
+
+outcome <- "RR_MULTOOS_F"
+treatment <- "SERVICES_SOC"
+
+data1 <- data_HS %>% select(region, ses_sch, bl_per, male_per, wh_per, 
+                            school_size, n_discipline, SCH_FTETEACH_TOT,
+                            !!as.name(outcome),
+                            !!as.name(treatment)) %>%
+                      filter(complete.cases(.) & !!as.name(outcome)> 0 & !!as.name(outcome) < 30)
+
+####   Matching           #####################################################
+
+m.out1 <- matchit(as.formula(paste(treatment, "~", paste("region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")),
+                  data = data1, caliper = 0.25)
+
+#summary(m.out1)
+
+m.data1 <- match.data(m.out1, data = data1)
+
+# covariance balance after matching  
+plot_demo<- love.plot(m.out1, binary = "std", 
+                      thresholds = c(m = .1),
+                      abs = TRUE,
+                      line = TRUE, 
+                      colors = c("red", "blue"),
+                      shapes = c("triangle filled", "circle filled")); plot_demo
+
+####   Effects Analysis           ##############################################
+
+lm_fit_matching <- lm(as.formula(paste(outcome, "~", paste(treatment, "region", "ses_sch", "school_size", 
+                                                         "n_discipline", "SCH_FTETEACH_TOT",
+                                                         "bl_per","male_per","wh_per", sep=" + "), sep="")), 
+                  data = m.data1, weights = weights)
+
+### with robust standard error #################################################
+coeftest(lm_fit_matching, vcov. = vcovCL, cluster = ~subclass)[treatment,, drop=FALSE]
+
+
+## Relative Risk ###############################################################
+m.data1 %>%
+  group_by(!!as.name(treatment)) %>%
+  summarise(RR_mean = mean(!!as.name(outcome)))
+
+```
+\newpage
+
